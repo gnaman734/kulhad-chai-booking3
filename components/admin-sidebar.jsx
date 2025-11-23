@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, Users, Package, FileText, CreditCard, Receipt, Settings, Shield, ArrowLeft, ShoppingCart, LogOut, User, QrCode, Menu } from "lucide-react";
+import { TrendingUp, Users, Package, FileText, CreditCard, Receipt, Settings, Shield, ArrowLeft, ShoppingCart, LogOut, User, QrCode, Menu, Boxes } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 function UserInfo() {
   const {
@@ -108,6 +108,11 @@ export function AdminSidebar({
     label: "Menu Management",
     icon: Menu,
     isActive: pathname === "/admin-dashboard/menu"
+  }, {
+    href: "/admin-dashboard/inventory",
+    label: "Inventory",
+    icon: Boxes,
+    isActive: pathname === "/admin-dashboard/inventory"
   }, {
     href: "/admin-dashboard/custom-bills",
     label: "Custom Bills",

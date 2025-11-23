@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { ordersService } from '@/lib/database';
+import { ordersService, inventoryService } from '@/lib/database';
 import { menuSyncService } from '@/lib/menu-sync';
 export async function POST(request) {
   try {
@@ -85,9 +85,18 @@ export async function POST(request) {
         status: 500
       });
     }
+    // Apply inventory consumption linked to this order
+    let inventory;
+    try {
+      inventory = await inventoryService.applyOrderConsumption(newOrder.id);
+    } catch (invErr) {
+      console.error('Inventory consumption failed:', invErr);
+      inventory = { success: false };
+    }
     return NextResponse.json({
       success: true,
-      order: newOrder
+      order: newOrder,
+      inventory
     }, {
       status: 201
     });

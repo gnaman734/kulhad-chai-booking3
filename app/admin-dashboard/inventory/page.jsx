@@ -276,6 +276,7 @@ export default function InventoryDashboard() {
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Total Items</CardTitle>
+                    <PackageSearch className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">{items.length}</div>
@@ -285,24 +286,27 @@ export default function InventoryDashboard() {
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Low Stock</CardTitle>
+                    <AlertTriangle className="h-4 w-4 text-orange-500" />
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold text-orange-600">{items.filter(i => i.reorderThreshold > 0 && i.quantityOnHand <= i.reorderThreshold).length}</div>
+                    <div className="text-2xl font-bold text-orange-600">{items.filter(i => i.reorderThreshold > 0 && i.quantityOnHand <= i.reorderThreshold && i.quantityOnHand > 0).length}</div>
                     <p className="text-xs text-muted-foreground">Items below threshold</p>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">Total Quantity</CardTitle>
+                    <CardTitle className="text-sm font-medium">Out of Stock</CardTitle>
+                    <AlertTriangle className="h-4 w-4 text-red-500" />
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold">{items.reduce((sum, i) => sum + (i.quantityOnHand || 0), 0)}</div>
-                    <p className="text-xs text-muted-foreground">Across all items</p>
+                    <div className="text-2xl font-bold text-red-600">{items.filter(i => i.quantityOnHand <= 0).length}</div>
+                    <p className="text-xs text-muted-foreground">Items with 0 quantity</p>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Categories</CardTitle>
+                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">{categoryOptions.filter(c => c !== "all").length}</div>
@@ -420,9 +424,17 @@ export default function InventoryDashboard() {
                             <TableCell>{item.sku || "-"}</TableCell>
                             <TableCell>{item.category || "Uncategorized"}</TableCell>
                             <TableCell>
-                              <Badge variant={item.reorderThreshold > 0 && item.quantityOnHand <= item.reorderThreshold ? "secondary" : "default"}>
-                                {formatQty(item.quantityOnHand, item.unit)}
-                              </Badge>
+                              {item.quantityOnHand <= 0 ? (
+                                <Badge variant="destructive">Out of Stock</Badge>
+                              ) : item.reorderThreshold > 0 && item.quantityOnHand <= item.reorderThreshold ? (
+                                <Badge variant="secondary" className="bg-orange-100 text-orange-800 hover:bg-orange-200">
+                                  Low: {formatQty(item.quantityOnHand, item.unit)}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                  {formatQty(item.quantityOnHand, item.unit)}
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell>{item.reorderThreshold > 0 ? `${item.reorderThreshold} → ${item.reorderQuantity}` : "-"}</TableCell>
                             <TableCell>

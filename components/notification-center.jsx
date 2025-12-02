@@ -1,196 +1,160 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Bell, X, Check, Clock, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { toast } from '@/components/ui/use-toast';
-import { Bell, Check, Mail, MessageSquare, Smartphone, X } from 'lucide-react';
+import { createClient } from '@/utils/supabase/client';
 import { formatDistanceToNow } from 'date-fns';
 
-export function NotificationCenter({ userId, limit = 50 }) {
+export function NotificationCenter() {
   const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all'); // all, unread, read
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
-    loadNotifications();
-  }, [userId, filter]);
+    const supabase = createClient();
 
-  const loadNotifications = async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams({ limit: limit.toString() });
-      if (filter !== 'all') {
-        params.set('status', filter === 'unread' ? 'sent' : 'read');
+    // Initial fetch of recent pending orders
+    const fetchRecentOrders = async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (data) {
+        setNotifications(data);
+        setUnreadCount(data.length);
       }
-
-      const response = await fetch(`/api/notifications?${params}`);
-      if (!response.ok) throw new Error('Failed to load notifications');
-
-      const data = await response.json();
-      setNotifications(data.notifications || []);
-    } catch (error) {
-      console.error('Error loading notifications:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load notifications',
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const markAsRead = async (notificationId) => {
-    try {
-      const response = await fetch(`/api/notifications?id=${notificationId}`, {
-        method: 'PUT',
-      });
-
-      if (!response.ok) throw new Error('Failed to mark as read');
-
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notificationId ? { ...n, status: 'read' } : n))
-      );
-
-      toast({
-        title: 'Success',
-        description: 'Notification marked as read',
-      });
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to mark notification as read',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const getChannelIcon = (channel) => {
-    switch (channel) {
-      case 'email':
-        return <Mail className="h-4 w-4" />;
-      case 'sms':
-        return <MessageSquare className="h-4 w-4" />;
-      case 'push':
-        return <Smartphone className="h-4 w-4" />;
-      default:
-        return <Bell className="h-4 w-4" />;
-    }
-  };
-
-  const getChannelBadge = (channel) => {
-    const variants = {
-      email: 'default',
-      sms: 'secondary',
-      push: 'outline',
-      in_app: 'default',
     };
-    return variants[channel] || 'default';
+
+    fetchRecentOrders();
+
+    // Subscribe to new orders
+    const channel = supabase.channel('notification-center')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'orders'
+      }, payload => {
+        const newOrder = payload.new;
+        if (newOrder.status === 'pending') {
+          setNotifications(prev => [newOrder, ...prev]);
+          setUnreadCount(prev => prev + 1);
+        }
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'orders'
+      }, payload => {
+        // If order status changes from pending, remove from notifications or mark as read
+        const updatedOrder = payload.new;
+        if (updatedOrder.status !== 'pending') {
+          setNotifications(prev => prev.filter(n => n.id !== updatedOrder.id));
+          setUnreadCount(prev => Math.max(0, prev - 1));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handleOpenChange = (open) => {
+    setIsOpen(open);
+    if (open) {
+      // Optional: Mark all as read when opening? 
+      // For now, we keep them as "unread" until actioned or explicitly dismissed
+    }
   };
 
-  const unreadCount = notifications.filter((n) => n.status !== 'read').length;
+  const markAsRead = (id) => {
+    // In a real app, we might update a 'read' status in DB.
+    // Here we just remove it from the list or visually mark it.
+    // Let's remove it from the list for now as "dismissed"
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    setUnreadCount(prev => Math.max(0, prev - 1));
+  };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle>Notifications</CardTitle>
-            <CardDescription>
-              {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up!'}
-            </CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant={filter === 'all' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setFilter('all')}
+    <Popover open={isOpen} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative">
+          <Bell className="h-5 w-5" />
+          {unreadCount > 0 && (
+            <Badge
+              variant="destructive"
+              className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-[10px] rounded-full"
             >
-              All
-            </Button>
-            <Button
-              variant={filter === 'unread' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setFilter('unread')}
-            >
-              Unread
-            </Button>
-          </div>
+              {unreadCount}
+            </Badge>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0" align="end">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <h4 className="font-semibold">Notifications</h4>
+          {unreadCount > 0 && (
+            <Badge variant="secondary" className="text-xs">
+              {unreadCount} New
+            </Badge>
+          )}
         </div>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="flex items-center justify-center py-8 text-muted-foreground">
-            Loading notifications...
-          </div>
-        ) : notifications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-            <Bell className="h-12 w-12 mb-4 opacity-50" />
-            <p>No notifications yet</p>
-          </div>
-        ) : (
-          <ScrollArea className="h-[600px]">
-            <div className="space-y-2">
+        <ScrollArea className="h-[300px]">
+          {notifications.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full p-4 text-muted-foreground">
+              <Bell className="h-8 w-8 mb-2 opacity-20" />
+              <p className="text-sm">No new notifications</p>
+            </div>
+          ) : (
+            <div className="divide-y">
               {notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className={`rounded-lg border p-4 transition-colors ${
-                    notification.status !== 'read'
-                      ? 'bg-blue-50 border-blue-200'
-                      : 'bg-white'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center gap-2">
-                        {getChannelIcon(notification.channel)}
-                        <Badge variant={getChannelBadge(notification.channel)}>
-                          {notification.channel}
-                        </Badge>
-                        {notification.status !== 'read' && (
-                          <div className="h-2 w-2 rounded-full bg-blue-500" />
-                        )}
-                      </div>
-                      <div>
-                        <h4 className="font-semibold">{notification.title}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {notification.message}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                        <span>
-                          {formatDistanceToNow(new Date(notification.createdAt), {
-                            addSuffix: true,
-                          })}
-                        </span>
-                        {notification.orderId && (
-                          <span>Order #{notification.orderId.slice(-8).toUpperCase()}</span>
-                        )}
-                      </div>
+                <div key={notification.id} className="p-4 hover:bg-muted/50 transition-colors relative group">
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="font-medium text-sm flex items-center">
+                      <span className="w-2 h-2 bg-blue-500 rounded-full mr-2 inline-block"></span>
+                      New Order #{notification.id.slice(-4)}
                     </div>
-                    {notification.status !== 'read' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => markAsRead(notification.id)}
-                        className="h-8 w-8 p-0"
-                      >
-                        <Check className="h-4 w-4" />
-                      </Button>
-                    )}
+                    <span className="text-[10px] text-muted-foreground flex items-center">
+                      <Clock className="h-3 w-3 mr-1" />
+                      {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                    </span>
+                  </div>
+                  <div className="text-sm text-muted-foreground mb-2 pl-4">
+                    <div className="flex items-center gap-1">
+                      <User className="h-3 w-3" />
+                      {notification.customer_name}
+                    </div>
+                    <div className="font-medium text-foreground mt-1">
+                      ₹{notification.total_amount}
+                    </div>
+                  </div>
+                  <div className="pl-4 flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs w-full"
+                      onClick={() => markAsRead(notification.id)}
+                    >
+                      Dismiss
+                    </Button>
                   </div>
                 </div>
               ))}
             </div>
-          </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
+          )}
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
   );
 }
-

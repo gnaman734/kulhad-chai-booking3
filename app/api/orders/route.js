@@ -127,11 +127,22 @@ export async function POST(request) {
     });
   }
 }
-export async function GET() {
+export async function GET(request) {
   try {
-    const orders = await ordersService.getAll();
+    const { searchParams } = new URL(request.url);
+    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')) : undefined;
+    const offset = searchParams.get('offset') ? parseInt(searchParams.get('offset')) : undefined;
+    const status = searchParams.get('status') || undefined;
+
+    const orders = await ordersService.getAll({ limit, offset, status });
+
     return NextResponse.json({
-      orders
+      orders,
+      pagination: limit ? {
+        limit,
+        offset: offset || 0,
+        hasMore: orders.length === limit
+      } : undefined
     }, {
       headers: {
         'Cache-Control': 'public, max-age=300, s-maxage=300',

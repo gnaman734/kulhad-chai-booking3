@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS payments (
   -- Payment details
   amount DECIMAL(10, 2) NOT NULL,
   currency VARCHAR(3) DEFAULT 'INR',
-  status VARCHAR(50) DEFAULT 'created',
+  status VARCHAR(50) DEFAULT 'created' CHECK (status IN ('created', 'authorized', 'captured', 'failed', 'refunded', 'partial_refund')),
   payment_method VARCHAR(50),
   
   -- Customer details

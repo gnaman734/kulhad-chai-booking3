@@ -1,160 +1,116 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
+import { AdminSidebar } from "@/components/admin-sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
-import { TrendingUp, DollarSign, ShoppingCart, Users, Download, Calendar, Package } from "lucide-react";
-import { getInvoices, getProducts, getCustomers, getPayments } from "@/lib/supabase-service-cached";
-import { useMultipleCachedData } from "@/hooks/useCachedData";
+import { ArrowLeft, Calendar, Download, TrendingUp, ShoppingBag, CreditCard } from "lucide-react";
+import { useMultipleCachedData } from "@/lib/supabase-service-cached";
+import { getInvoices } from "@/lib/supabase-service-cached";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
+import { format, subDays, startOfDay, endOfDay, isWithinInterval, parseISO, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "date-fns";
 
 export default function ReportsPage() {
-  const [dateRange, setDateRange] = useState("30"); // days
-  const [reportType, setReportType] = useState("overview");
-  
-  // Use cached data hook for better performance
   const { data, loading } = useMultipleCachedData([
     { cacheType: 'invoices', fetchFunction: getInvoices },
-    { cacheType: 'products', fetchFunction: getProducts },
-    { cacheType: 'customers', fetchFunction: getCustomers },
-    { cacheType: 'payments', fetchFunction: getPayments },
   ]);
 
+  const [dateRange, setDateRange] = useState("7days"); // 7days, 30days, thisMonth, lastMonth, all
+
   const invoices = data.invoices || [];
-  const products = data.products || [];
-  const customers = data.customers || [];
-  const payments = data.payments || [];
 
-  // Filter data based on date range
-  const filterByDateRange = (items, dateField = "createdAt") => {
-    const days = Number.parseInt(dateRange);
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
-    return items.filter(item => {
-      const itemDate = new Date(item[dateField]);
-      return itemDate >= cutoffDate;
+  const filteredInvoices = useMemo(() => {
+    const now = new Date();
+    let start, end;
+
+    switch (dateRange) {
+      case "7days":
+        start = subDays(now, 7);
+        end = now;
+        break;
+      case "30days":
+        start = subDays(now, 30);
+        end = now;
+        break;
+      case "thisMonth":
+        start = startOfMonth(now);
+        end = endOfMonth(now);
+        break;
+      case "lastMonth":
+        start = startOfMonth(subDays(startOfMonth(now), 1));
+        end = endOfMonth(subDays(startOfMonth(now), 1));
+        break;
+      case "all":
+        return invoices;
+      default:
+        start = subDays(now, 7);
+        end = now;
+    }
+
+    return invoices.filter(inv => {
+      const date = new Date(inv.createdAt);
+      return isWithinInterval(date, { start, end });
     });
+  }, [invoices, dateRange]);
+
+  const metrics = useMemo(() => {
+    const totalRevenue = filteredInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+    const totalOrders = filteredInvoices.length;
+    const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+    // Group by date for charts
+    const dailyData = {};
+    filteredInvoices.forEach(inv => {
+      const dateStr = format(new Date(inv.createdAt), 'MMM dd');
+      if (!dailyData[dateStr]) {
+        dailyData[dateStr] = { date: dateStr, revenue: 0, orders: 0 };
+      }
+      dailyData[dateStr].revenue += (inv.totalAmount || 0);
+      dailyData[dateStr].orders += 1;
+    });
+
+    const chartData = Object.values(dailyData).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    return { totalRevenue, totalOrders, averageOrderValue, chartData };
+  }, [filteredInvoices]);
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0
+    }).format(amount);
   };
-  const filteredInvoices = filterByDateRange(invoices);
-  const filteredPayments = filterByDateRange(payments);
 
-  // Calculate metrics
-  const totalRevenue = filteredInvoices.filter(inv => inv.paymentStatus === "paid").reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalProfit = filteredInvoices.filter(inv => inv.paymentStatus === "paid").reduce((sum, inv) => {
-    const profit = inv.items.reduce((itemSum, item) => {
-      const product = products.find(p => p.id === item.productId);
-      const costPrice = product ? product.cost : 0;
-      return itemSum + (item.unitPrice - costPrice) * item.quantity;
-    }, 0);
-    return sum + profit;
-  }, 0);
-  const pendingAmount = filteredInvoices.filter(inv => inv.paymentStatus !== "paid").reduce((sum, inv) => sum + inv.balanceDue, 0);
-
-  // Sales by day for chart
-  const salesByDay = filteredInvoices.reduce((acc, invoice) => {
-    const date = new Date(invoice.createdAt).toLocaleDateString();
-    if (!acc[date]) {
-      acc[date] = {
-        date,
-        sales: 0,
-        invoices: 0
-      };
-    }
-    if (invoice.paymentStatus === "paid") {
-      acc[date].sales += invoice.totalAmount;
-    }
-    acc[date].invoices += 1;
-    return acc;
-  }, {});
-  const chartData = Object.values(salesByDay).slice(-7); // Last 7 days
-
-  // Top products
-  const productSales = filteredInvoices.filter(inv => inv.paymentStatus === "paid").flatMap(inv => inv.items).reduce((acc, item) => {
-    if (!acc[item.productId]) {
-      acc[item.productId] = {
-        productId: item.productId,
-        productName: item.productName,
-        quantity: 0,
-        revenue: 0
-      };
-    }
-    acc[item.productId].quantity += item.quantity;
-    acc[item.productId].revenue += item.totalAmount;
-    return acc;
-  }, {});
-  const topProducts = Object.values(productSales).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
-
-  // Payment method breakdown
-  const paymentMethods = filteredPayments.reduce((acc, payment) => {
-    if (!acc[payment.method]) {
-      acc[payment.method] = {
-        method: payment.method,
-        amount: 0,
-        count: 0
-      };
-    }
-    acc[payment.method].amount += payment.amount;
-    acc[payment.method].count += 1;
-    return acc;
-  }, {});
-  const paymentMethodData = Object.values(paymentMethods);
-  const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8"];
-  return <div className="min-h-screen bg-background">
+  return (
+    <div className="min-h-screen bg-background">
       <div className="flex">
-        {/* Sidebar */}
-        <div className="w-64 bg-sidebar text-sidebar-foreground min-h-screen">
-          <div className="p-6">
-            <h1 className="text-xl font-bold">Business Admin</h1>
-            <p className="text-sm text-sidebar-foreground/70">Reports & Analytics</p>
-          </div>
-          <nav className="px-4 space-y-2">
-            <Button variant="ghost" className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => window.location.href = "/admin-dashboard"}>
-              <TrendingUp className="mr-3 h-4 w-4" />
-              Dashboard
-            </Button>
-            <Button variant="ghost" className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => window.location.href = "/admin-dashboard/customers"}>
-              <Users className="mr-3 h-4 w-4" />
-              Customers
-            </Button>
-            <Button variant="ghost" className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => window.location.href = "/admin-dashboard/products"}>
-              <Package className="mr-3 h-4 w-4" />
-              Products
-            </Button>
-            <Button variant="ghost" className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => window.location.href = "/admin-dashboard/invoices"}>
-              <ShoppingCart className="mr-3 h-4 w-4" />
-              Invoices
-            </Button>
-            <Button variant="ghost" className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent" onClick={() => window.location.href = "/admin-dashboard/payments"}>
-              <DollarSign className="mr-3 h-4 w-4" />
-              Payments
-            </Button>
-            <Button variant="default" className="w-full justify-start">
-              <TrendingUp className="mr-3 h-4 w-4" />
-              Reports
-            </Button>
-          </nav>
-        </div>
-
-        {/* Main Content */}
+        <AdminSidebar />
         <div className="flex-1 p-8">
-          <div className="flex justify-between items-center mb-8">
+          <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-foreground">Reports & Analytics</h1>
-              <p className="text-muted-foreground">Business insights and performance metrics</p>
+              <div className="flex items-center gap-4 mb-2">
+                <Button variant="ghost" size="sm" onClick={() => window.history.back()} className="flex items-center gap-2">
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </Button>
+              </div>
+              <h1 className="text-3xl font-bold">Reports & Analytics</h1>
+              <p className="text-muted-foreground">Visualize your business performance over time</p>
             </div>
-            <div className="flex gap-4">
+            <div className="flex items-center gap-2">
               <Select value={dateRange} onValueChange={setDateRange}>
-                <SelectTrigger className="w-40">
-                  <SelectValue />
+                <SelectTrigger className="w-[180px]">
+                  <Calendar className="mr-2 h-4 w-4" />
+                  <SelectValue placeholder="Select range" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="7">Last 7 days</SelectItem>
-                  <SelectItem value="30">Last 30 days</SelectItem>
-                  <SelectItem value="90">Last 90 days</SelectItem>
-                  <SelectItem value="365">Last year</SelectItem>
+                  <SelectItem value="7days">Last 7 Days</SelectItem>
+                  <SelectItem value="30days">Last 30 Days</SelectItem>
+                  <SelectItem value="thisMonth">This Month</SelectItem>
+                  <SelectItem value="lastMonth">Last Month</SelectItem>
+                  <SelectItem value="all">All Time</SelectItem>
                 </SelectContent>
               </Select>
               <Button variant="outline">
@@ -164,128 +120,84 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Key Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <TrendingUp className="h-4 w-4 text-green-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">₹{totalRevenue.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground">+12% from last period</p>
+                <div className="text-2xl font-bold">{formatCurrency(metrics.totalRevenue)}</div>
+                <p className="text-xs text-muted-foreground">For selected period</p>
               </CardContent>
             </Card>
-
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
+                <ShoppingBag className="h-4 w-4 text-blue-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">₹{totalProfit.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground">
-                  Profit margin: {totalRevenue > 0 ? (totalProfit / totalRevenue * 100).toFixed(1) : 0}%
-                </p>
+                <div className="text-2xl font-bold">{metrics.totalOrders}</div>
+                <p className="text-xs text-muted-foreground">For selected period</p>
               </CardContent>
             </Card>
-
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pending Amount</CardTitle>
-                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Average Order Value</CardTitle>
+                <CreditCard className="h-4 w-4 text-purple-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">₹{pendingAmount.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground">Outstanding payments</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Invoices</CardTitle>
-                <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{filteredInvoices.length}</div>
-                <p className="text-xs text-muted-foreground">
-                  {filteredInvoices.filter(inv => inv.paymentStatus === "paid").length} paid
-                </p>
+                <div className="text-2xl font-bold">{formatCurrency(metrics.averageOrderValue)}</div>
+                <p className="text-xs text-muted-foreground">Revenue / Orders</p>
               </CardContent>
             </Card>
           </div>
 
           {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <Card>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="col-span-1">
               <CardHeader>
-                <CardTitle>Sales Trend</CardTitle>
+                <CardTitle>Revenue Trend</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="sales" stroke="#8884d8" strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={metrics.chartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip formatter={(value) => formatCurrency(value)} />
+                      <Legend />
+                      <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2} name="Revenue" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="col-span-1">
               <CardHeader>
-                <CardTitle>Payment Methods</CardTitle>
+                <CardTitle>Orders Trend</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie data={paymentMethodData} cx="50%" cy="50%" labelLine={false} label={({
-                    method,
-                    amount
-                  }) => `${method}: ₹${amount}`} outerRadius={80} fill="#8884d8" dataKey="amount">
-                      {paymentMethodData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={metrics.chartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="orders" fill="#3b82f6" name="Orders" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </CardContent>
             </Card>
           </div>
-
-          {/* Top Products */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Top Selling Products</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Quantity Sold</TableHead>
-                    <TableHead>Revenue</TableHead>
-                    <TableHead>Avg. Price</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {topProducts.map((product, index) => <TableRow key={product.productId}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">#{index + 1}</Badge>
-                          {product.productName}
-                        </div>
-                      </TableCell>
-                      <TableCell>{product.quantity}</TableCell>
-                      <TableCell>₹{product.revenue.toLocaleString()}</TableCell>
-                      <TableCell>₹{(product.revenue / product.quantity).toFixed(2)}</TableCell>
-                    </TableRow>)}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
         </div>
       </div>
-    </div>;
+    </div>
+  );
 }
